@@ -15,14 +15,30 @@ Translation is opt-in and never executes the input. It accepts one script argume
 
 ```fish
 fws --translate 'export EDITOR=nvim; echo "$EDITOR"'
+fws --translate                         # paste Bash, then Ctrl-D on an empty line
 cat setup.sh | fws --translate
 fws --translate --file setup.sh --output setup.fish
 fws --translate --file setup.sh --check --explain --validate
 ```
 
-Supported translation includes scalar assignments/exports, simple `unset`, comments and recognized Bash shebangs, supported `if`/`elif` tests, literal `for` loops, supported `while` conditions, brace functions with `local`, simple foreground commands, and stateless command pipelines; only `echo`, `printf`, `true`, and `false` are translated as shell builtins. Assignments are preceded by `builtin true` so their successful Bash status is preserved; status-dependent assignment values are rejected. Some Bash/fish differences (including list-vs-scalar, function lookup/scope, unset visibility, loop binding, pipeline status, and dynamic echo options) are warned as approximate and rejected by `--strict`. Equivalent transformation details appear with `--explain`; warnings always go to stderr. `--check` analyzes without generated code. `--validate` asks fish 4.x (`fish --no-config -n`) to check syntax only; it does not execute code or prove Bash/fish equivalence. `--output` writes only after conversion and optional validation complete, refuses existing files by default, and `--force` atomically replaces an existing regular destination. A destination symlink is refused even with `--force`; input and output aliases are rejected, including symlink and hard-link aliases. Use a stable, user-controlled destination directory; the parent directory is the filesystem trust boundary.
+Options:
+
+- `--file PATH`: read a script file explicitly. A positional argument is always script text, never a guessed filename.
+- `--output PATH` / `-o PATH`: write converted code to a file. Existing destinations are refused unless `--force` is supplied.
+- `--force`: atomically replace an existing regular destination. A destination symlink is refused even with force.
+- `--check`: analyze without writing or printing generated code; cannot be combined with output.
+- `--explain`: print conversion details to stderr. Warnings also go to stderr.
+- `--strict`: reject translations that rely on approximate Bash/fish behavior.
+- `--validate`: ask fish 4.x to check generated syntax with `fish --no-config -n`. This checks syntax only; it does not execute code or prove Bash/fish equivalence.
+- `--`: end option parsing; the next argument is the script.
+
+Supported constructs include scalar assignments/exports, simple `unset`, comments and recognized Bash shebangs, supported `if`/`elif` tests, literal `for` loops, supported `while` conditions, brace functions with `local`, simple foreground commands, and stateless command pipelines. Only `echo`, `printf`, `true`, and `false` are translated as shell builtins. Assignments are preceded by `builtin true` to preserve their successful Bash status; status-dependent assignment values are rejected.
+
+Some Bash/fish differences (including list-vs-scalar, function lookup/scope, unset visibility, loop binding, pipeline status, and dynamic echo options) are warned as approximate and rejected by `--strict`. Output is published only after conversion and optional validation succeed. Input/output aliases are rejected, including symlink and hard-link aliases. Use a stable, user-controlled destination directory; the destination's parent directory is the filesystem trust boundary.
 
 Arrays, positional/advanced expansions, arithmetic, substitutions, heredocs, complex redirections, source/dot, shell-option/builtin management, and unsupported shell operators or syntax are rejected without partial code. Dynamic echo arguments may be fish options even when the Bash scalar is data, so they are flagged approximate (and strict rejects them). Variable assignments/reads are limited to ordinary identifiers: shell-reserved names and `BASH*`, `COMP_*`, and `fish_*` names are rejected. Translation input must be UTF-8. For unsupported Bash, use the default runner, not translation.
+
+Only ASCII spaces, tabs, and LF newlines may be ignored between syntax tokens. Unquoted escaped whitespace/continuations and control-character separators (including unquoted CRLF) are rejected rather than silently losing argument data. Quoted control characters, Unicode, multiline literals, and literal-only quoted continuations remain supported.
 
 ## Install
 
@@ -107,6 +123,11 @@ fws < setup.sh
 
 ```sh
 cargo test
+FWS_REQUIRE_FISH=1 cargo test --test parity
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
+cargo build
+python3 tests/interactive.py target/debug/fws
 ```
+
+The required parity check needs Bash and fish 4.x on `PATH`; without `FWS_REQUIRE_FISH=1`, fish-dependent tests report a skip when fish is unavailable. The PTY check exercises interactive paste through EOF and needs Python 3 on Unix.

@@ -6,14 +6,18 @@ By default `fws` runs Bash rather than translating its syntax into fish. That pr
 
 ## Translate supported snippets
 
-Translation is opt-in and never executes the input:
+Translation is opt-in and never executes the input. It accepts one script argument, a file, or stdin; file paths remain native OS paths while script text must be UTF-8:
 
 ```fish
 fws --translate 'export EDITOR=nvim; echo "$EDITOR"'
 cat setup.sh | fws --translate
+fws --translate --file setup.sh --output setup.fish
+fws --translate --file setup.sh --check --explain --validate
 ```
 
-The first milestone supports top-level scalar assignments and exports, comments/shebangs, and simple commands with literal or quoted scalar-expansion arguments. Assignments are preceded by `builtin true` so their successful Bash status is preserved; status-dependent assignment values are rejected. Fish-list/scalar assumptions are reported as warnings. Only conservative `echo`, `true`, `false`, and `printf` forms are translated; other Bash/fish builtins, shell operators, redirections, and unquoted expansions fail without emitting partial code. Variable assignments/reads are limited to ordinary identifiers: shell-reserved names and `BASH*`, `COMP_*`, and `fish_*` names are rejected. Translation input must be UTF-8. File input/output, strict/check/validation options, and nested control flow are not implemented yet.
+The translator supports top-level scalar assignments and exports, comments/shebangs, and simple commands with literal or quoted scalar-expansion arguments. Assignments are preceded by `builtin true` so their successful Bash status is preserved; status-dependent assignment values are rejected. Fish-list/scalar assumptions are reported as warnings and rejected by `--strict`. `--check` performs translation without output; `--explain` prints diagnostics and a summary to stderr. `--validate` asks `fish --no-config -n` to check syntax only; this does not execute code or prove Bash/fish semantic equivalence. `--output` writes only after conversion and optional validation complete, refuses existing files by default, and `--force` atomically replaces an existing regular destination. A destination symlink is refused even with `--force`; input and output aliases are rejected, including symlink and hard-link aliases. Use a stable, user-controlled destination directory; the parent directory is the filesystem trust boundary.
+
+Only conservative `echo`, `true`, `false`, and `printf` forms are translated; other Bash/fish builtins, shell operators, redirections, and unquoted expansions fail without emitting partial code. Variable assignments/reads are limited to ordinary identifiers: shell-reserved names and `BASH*`, `COMP_*`, and `fish_*` names are rejected. Translation input must be UTF-8. The existing default runner continues to execute Bash and remains the choice for unsupported Bash features.
 
 ## Install
 

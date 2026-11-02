@@ -7,10 +7,15 @@ pub enum Invocation {
 }
 
 pub fn parse(args: Vec<OsString>) -> Result<Invocation, String> {
+    if args.len() == 2
+        && (args[0] == OsStr::new("--translate") || args[0] == OsStr::new("-t"))
+        && (args[1] == OsStr::new("-h") || args[1] == OsStr::new("--help"))
+    {
+        return Ok(Invocation::Help);
+    }
     if args.len() == 1 && (args[0] == OsStr::new("-h") || args[0] == OsStr::new("--help")) {
         return Ok(Invocation::Help);
     }
-
     if args
         .first()
         .is_some_and(|arg| arg == OsStr::new("--translate") || arg == OsStr::new("-t"))

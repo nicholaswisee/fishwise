@@ -41,6 +41,8 @@ struct Bindings {
     scalars: BTreeSet<String>,
     locals: BTreeSet<String>,
     possible_locals: BTreeSet<String>,
+    echo_safe: BTreeSet<String>,
+    echo_option: BTreeSet<String>,
 }
 
 impl Bindings {
@@ -52,6 +54,10 @@ impl Bindings {
             result
                 .possible_locals
                 .extend(arm.possible_locals.iter().cloned());
+            result.echo_safe.retain(|name| arm.echo_safe.contains(name));
+            result
+                .echo_option
+                .retain(|name| arm.echo_option.contains(name));
         }
         result
     }
@@ -283,6 +289,20 @@ impl Emitter<'_> {
             self.set_assignment(flag, name, &value);
         }
         self.bindings.scalars.insert(name.to_owned());
+        self.bindings.echo_safe.remove(name);
+        self.bindings.echo_option.remove(name);
+        if !has_expansion(value_node)
+            && matches!(
+                value_node.kind(),
+                "word" | "raw_string" | "string" | "number"
+            )
+        {
+            if literal_starts_with_dash(value_node, self.source) {
+                self.bindings.echo_option.insert(name.to_owned());
+            } else {
+                self.bindings.echo_safe.insert(name.to_owned());
+            }
+        }
         if local {
             self.bindings.locals.insert(name.to_owned());
             self.bindings.possible_locals.insert(name.to_owned());
@@ -330,6 +350,8 @@ impl Emitter<'_> {
             self.depth -= 1;
             self.line("end");
             self.bindings.scalars.remove(name);
+            self.bindings.echo_safe.remove(name);
+            self.bindings.echo_option.remove(name);
         }
     }
 
@@ -836,6 +858,16 @@ impl Emitter<'_> {
             );
             return None;
         }
+        if cmd == "echo" {
+            for arg in &args {
+                if has_unproven_echo_expansion(*arg, self.source, &self.bindings) {
+                    self.approximate(
+                        *arg,
+                        "echo argument may be interpreted as a fish option when its expanded value starts with a dash",
+                    );
+                }
+            }
+        }
         if cmd == "printf"
             && (args.is_empty()
                 || !matches!(
@@ -869,6 +901,16 @@ fn named(node: Node<'_>) -> Vec<Node<'_>> {
 }
 fn has_expansion(node: Node<'_>) -> bool {
     node.kind().contains("expansion") || named(node).into_iter().any(has_expansion)
+}
+fn has_unproven_echo_expansion(node: Node<'_>, source: &str, bindings: &Bindings) -> bool {
+    (node.kind() == "simple_expansion"
+        && named(node).iter().any(|n| {
+            let name = node_text(*n, source);
+            name != "?" && !bindings.echo_safe.contains(name)
+        }))
+        || named(node)
+            .into_iter()
+            .any(|n| has_unproven_echo_expansion(n, source, bindings))
 }
 fn contains_status(node: Node<'_>, source: &str) -> bool {
     (node.kind() == "simple_expansion" && named(node).iter().any(|n| node_text(*n, source) == "?"))

@@ -67,6 +67,9 @@ pub fn run(args: TranslateArgs) -> i32 {
     match translate(&input) {
         Ok(result) => {
             for d in &result.diagnostics {
+                if matches!(d.classification, Classification::Equivalent) && !args.explain {
+                    continue;
+                }
                 let label = match d.classification {
                     Classification::Approximate => "warning",
                     Classification::Equivalent => "info",

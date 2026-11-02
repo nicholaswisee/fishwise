@@ -1,12 +1,17 @@
 # fishwise (`fws`)
 
-Run copied Bash commands from your fish terminal with Bash semantics, or opt in to translating a conservative subset into fish. Written in Rust; the translator uses tree-sitter-bash. Run mode requires Bash on `PATH`; supports Linux and macOS.
+Run copied Bash commands from fish without rewriting them. By default, `fws` executes the complete script with Bash; this remains the right choice for arrays, heredocs, `.env` sourcing, and other Bash features.
 
-By default `fws` runs Bash rather than translating its syntax into fish. That preserves `set -a`, `. ./.env`, exports, heredocs, arrays, expansions, pipelines, and Bash builtins.
+```fish
+fws 'echo ${NAME:-guest}; echo $((5 + 3))'
+fws --translate -- 'export EDITOR=nvim'
+```
+
+Run mode requires Bash on `PATH`. `fws` is written in Rust and uses tree-sitter-bash for translation; building from source needs a C compiler and parser build dependencies. The project currently supports Unix (Linux and macOS).
 
 ## Translate supported snippets
 
-Translation is opt-in and never executes the input. It accepts one script argument, a file, or stdin; file paths remain native OS paths while script text must be UTF-8:
+Translation is opt-in and never executes the input. It accepts one script argument, a file, or stdin through EOF. File paths remain native OS paths while script text must be UTF-8:
 
 ```fish
 fws --translate 'export EDITOR=nvim; echo "$EDITOR"'
@@ -15,9 +20,9 @@ fws --translate --file setup.sh --output setup.fish
 fws --translate --file setup.sh --check --explain --validate
 ```
 
-The translator supports top-level scalar assignments and exports, comments/shebangs, and simple commands with literal or quoted scalar-expansion arguments. Assignments are preceded by `builtin true` so their successful Bash status is preserved; status-dependent assignment values are rejected. Fish-list/scalar assumptions are reported as warnings and rejected by `--strict`. `--check` performs translation without output; `--explain` prints diagnostics and a summary to stderr. `--validate` asks `fish --no-config -n` to check syntax only; this does not execute code or prove Bash/fish semantic equivalence. `--output` writes only after conversion and optional validation complete, refuses existing files by default, and `--force` atomically replaces an existing regular destination. A destination symlink is refused even with `--force`; input and output aliases are rejected, including symlink and hard-link aliases. Use a stable, user-controlled destination directory; the parent directory is the filesystem trust boundary.
+Supported translation includes scalar assignments/exports, simple `unset`, comments and recognized Bash shebangs, supported `if`/`elif` tests, literal `for` loops, supported `while` conditions, brace functions with `local`, simple foreground commands, and stateless command pipelines; only `echo`, `printf`, `true`, and `false` are translated as shell builtins. Assignments are preceded by `builtin true` so their successful Bash status is preserved; status-dependent assignment values are rejected. Some Bash/fish differences (including list-vs-scalar, function lookup/scope, unset visibility, loop binding, pipeline status, and dynamic echo options) are warned as approximate and rejected by `--strict`. Equivalent transformation details appear with `--explain`; warnings always go to stderr. `--check` analyzes without generated code. `--validate` asks fish 4.x (`fish --no-config -n`) to check syntax only; it does not execute code or prove Bash/fish equivalence. `--output` writes only after conversion and optional validation complete, refuses existing files by default, and `--force` atomically replaces an existing regular destination. A destination symlink is refused even with `--force`; input and output aliases are rejected, including symlink and hard-link aliases. Use a stable, user-controlled destination directory; the parent directory is the filesystem trust boundary.
 
-Only conservative `echo`, `true`, `false`, and `printf` forms are translated; other Bash/fish builtins, shell operators, redirections, and unquoted expansions fail without emitting partial code. Variable assignments/reads are limited to ordinary identifiers: shell-reserved names and `BASH*`, `COMP_*`, and `fish_*` names are rejected. Translation input must be UTF-8. The existing default runner continues to execute Bash and remains the choice for unsupported Bash features.
+Arrays, positional/advanced expansions, arithmetic, substitutions, heredocs, complex redirections, source/dot, shell-option/builtin management, and unsupported shell operators or syntax are rejected without partial code. Dynamic echo arguments may be fish options even when the Bash scalar is data, so they are flagged approximate (and strict rejects them). Variable assignments/reads are limited to ordinary identifiers: shell-reserved names and `BASH*`, `COMP_*`, and `fish_*` names are rejected. Translation input must be UTF-8. For unsupported Bash, use the default runner, not translation.
 
 ## Install
 

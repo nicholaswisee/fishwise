@@ -258,8 +258,46 @@ fn check_and_explain_never_put_generated_code_on_stdout() {
         b"",
     );
     assert_eq!(explained.status.code(), Some(0));
-    assert!(explained.stdout.is_empty() || explained.stdout == b"echo hello\n");
+    assert_eq!(explained.stdout, b"echo hello\n");
     assert!(!explained.stderr.is_empty());
+    let plain = fws(
+        &[
+            std::ffi::OsStr::new("--translate"),
+            std::ffi::OsStr::new("echo hello"),
+        ],
+        b"",
+    );
+    assert!(
+        plain.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&plain.stderr)
+    );
+}
+
+#[test]
+fn dynamic_echo_options_are_approximate_and_strict_rejects_them() {
+    let ordinary = fws(
+        &[
+            std::ffi::OsStr::new("--translate"),
+            std::ffi::OsStr::new("X=--; echo \"$X\""),
+        ],
+        b"",
+    );
+    assert_eq!(ordinary.status.code(), Some(0));
+    assert_eq!(ordinary.stdout, b"builtin true\nset -g X --\necho \"$X\"\n");
+    assert!(String::from_utf8_lossy(&ordinary.stderr)
+        .contains("echo argument may be interpreted as a fish option"));
+
+    let strict = fws(
+        &[
+            std::ffi::OsStr::new("--translate"),
+            std::ffi::OsStr::new("X=--; echo \"$X\""),
+            std::ffi::OsStr::new("--strict"),
+        ],
+        b"",
+    );
+    assert_eq!(strict.status.code(), Some(1));
+    assert!(strict.stdout.is_empty());
 }
 
 #[test]
@@ -295,6 +333,69 @@ fn failed_translation_does_not_publish_partial_output() {
     assert_eq!(result.status.code(), Some(1));
     assert!(result.stdout.is_empty());
     assert_eq!(fs::read(&output).unwrap(), b"prior");
+}
+
+#[test]
+fn rejected_side_effect_sentinels_are_inert_in_every_analysis_mode() {
+    let dir = temp_dir();
+    let sentinel = dir.join("must-not-exist");
+    let script = format!("echo prefix; echo \"$(touch {})\"", sentinel.display());
+    for flags in [
+        vec![],
+        vec!["--check"],
+        vec!["--explain"],
+        vec!["--strict"],
+        vec!["--validate"],
+    ] {
+        let mut argv = vec![
+            std::ffi::OsString::from("--translate"),
+            script.clone().into(),
+        ];
+        argv.extend(flags.iter().map(std::ffi::OsString::from));
+        let refs: Vec<_> = argv.iter().map(|arg| arg.as_os_str()).collect();
+        let result = fws(&refs, b"");
+        assert_ne!(result.status.code(), Some(0), "flags: {flags:?}");
+        assert!(result.stdout.is_empty(), "flags: {flags:?}");
+        assert!(!sentinel.exists(), "executed source for flags: {flags:?}");
+    }
+
+    let destination = dir.join("existing.fish");
+    fs::write(&destination, b"preserve").unwrap();
+    let second_script = format!("echo prefix; echo $(touch {})", sentinel.display());
+    let result = fws(
+        &[
+            std::ffi::OsStr::new("--translate"),
+            std::ffi::OsStr::new(&second_script),
+            std::ffi::OsStr::new("--output"),
+            destination.as_os_str(),
+            std::ffi::OsStr::new("--force"),
+        ],
+        b"",
+    );
+    assert_ne!(result.status.code(), Some(0));
+    assert!(result.stdout.is_empty());
+    assert_eq!(fs::read(destination).unwrap(), b"preserve");
+}
+
+#[test]
+fn staged_write_failure_preserves_existing_destination() {
+    let dir = temp_dir();
+    let output = dir.join("existing.fish");
+    fs::write(&output, b"prior bytes").unwrap();
+    let result = Command::new("bash")
+        .args(["-c", "ulimit -f 0; trap '' XFSZ; exec \"$1\" --translate --output \"$2\" --force -- 'echo hello'", "driver"])
+        .arg(env!("CARGO_BIN_EXE_fws"))
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert_eq!(
+        result.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(fs::read(output).unwrap(), b"prior bytes");
+    assert_eq!(fs::read_dir(dir).unwrap().count(), 1, "staging file leaked");
 }
 
 #[test]
@@ -483,6 +584,58 @@ fn non_utf8_file_name_is_supported() {
         String::from_utf8_lossy(&result.stderr)
     );
     assert_eq!(result.stdout, b"echo hello\n");
+}
+
+#[test]
+fn help_describes_both_modes_stdin_and_translation_flags() {
+    for args in [vec!["--help"]] {
+        let result = Command::new(env!("CARGO_BIN_EXE_fws"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(0));
+        let help = String::from_utf8(result.stdout).unwrap();
+        for phrase in [
+            "Run mode (default)",
+            "read stdin to EOF",
+            "translate stdin to EOF",
+            "--file reads a file",
+            "--check analyzes without code output",
+            "--explain shows transformations and assumptions",
+            "--strict rejects approximate translations",
+            "--validate runs fish -n",
+            "-- before a script beginning with a dash",
+        ] {
+            assert!(help.contains(phrase), "missing {phrase:?} in {help}");
+        }
+    }
+}
+
+#[test]
+fn help_is_recognized_only_as_the_exact_mode_help_pair() {
+    for argv in [
+        args(&["--translate", "--help"]),
+        args(&["--translate", "-h"]),
+        args(&["-t", "--help"]),
+    ] {
+        let result = fws(&argv, b"must not be read");
+        assert_eq!(result.status.code(), Some(0), "args: {argv:?}");
+        assert!(String::from_utf8_lossy(&result.stdout).contains("Run mode (default)"));
+    }
+
+    let literal = fws(&args(&["--translate", "--", "--help"]), b"");
+    assert_eq!(literal.status.code(), Some(1));
+    assert!(!String::from_utf8_lossy(&literal.stdout).contains("Run mode (default)"));
+
+    let run_script = fws(&args(&["--", "--help"]), b"");
+    assert_ne!(run_script.status.code(), Some(0));
+
+    let filename = fws(&args(&["--translate", "--file", "--help"]), b"");
+    assert_eq!(filename.status.code(), Some(1));
+    assert!(!String::from_utf8_lossy(&filename.stdout).contains("Run mode (default)"));
+
+    let extra = fws(&args(&["--translate", "--help", "extra"]), b"");
+    assert_eq!(extra.status.code(), Some(2));
 }
 
 #[test]

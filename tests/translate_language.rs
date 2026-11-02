@@ -7,6 +7,158 @@ fn translate(script: &str) -> std::process::Output {
         .unwrap()
 }
 
+#[test]
+fn echo_prefix_proof_accounts_for_quoted_continuations_and_empty_values() {
+    for source in [
+        "echo \"\\\n--\"",
+        "echo \"\\\n-n\"",
+        "X=\"\\\n--\"; echo \"$X\"",
+        "X=\"\\\n-n\"; echo \"$X\"",
+        "X=''; echo \"$X--\"",
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_fws"))
+            .args(["--translate", "--strict", source])
+            .output()
+            .unwrap();
+        assert_ne!(out.status.code(), Some(0), "claimed safe echo: {source:?}");
+        assert!(out.stdout.is_empty(), "partial output: {source:?}");
+    }
+    for source in [
+        "X=one; echo \"$X\"",
+        "X=\"\\\none\"; echo \"$X\"",
+        "echo \"\\\none\"",
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_fws"))
+            .args(["--translate", "--strict", source])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{source:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
+fn reserved_bash_and_fish_variables_reject_across_all_binding_operations() {
+    for name in [
+        "SRANDOM",
+        "_",
+        "history",
+        "version",
+        "hostname",
+        "status_generation",
+        "CMD_DURATION",
+        "last_pid",
+        "COLUMNS",
+        "LINES",
+    ] {
+        for source in [
+            format!("printf '%s\\n' \"${name}\""),
+            format!("{name}=ordinary"),
+            format!("export {name}=ordinary"),
+            format!("f() {{ local {name}=ordinary; }}"),
+            format!("unset {name}"),
+        ] {
+            let out = translate(&source);
+            assert_ne!(
+                out.status.code(),
+                Some(0),
+                "accepted reserved variable: {source}"
+            );
+            assert!(out.stdout.is_empty(), "partial output: {source}");
+        }
+    }
+    for name in ["HOME", "USER", "TERM"] {
+        let out = translate(&format!("printf '%s\\n' \"${name}\""));
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "mutable default {name}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
+fn padded_shebang_comments_do_not_become_generated_interpreters() {
+    for (source, comment) in [
+        ("\n#!/bin/bash\nexport EDITOR=nvim", "#!/bin/bash"),
+        (
+            "  #!/usr/bin/python\nexport EDITOR=nvim",
+            "#!/usr/bin/python",
+        ),
+        ("\t#!unknown\nexport EDITOR=nvim", "#!unknown"),
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_fws"))
+            .args(["--translate", "--strict", source])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let code = String::from_utf8(out.stdout).unwrap();
+        assert!(!code.starts_with("#!"), "invented interpreter: {code:?}");
+        assert!(code.contains(comment), "lost comment: {code:?}");
+    }
+    let out = translate("#!/bin/bash\nexport EDITOR=nvim");
+    assert_eq!(out.status.code(), Some(0));
+    assert!(out.stdout.starts_with(b"#!/usr/bin/env fish\n"));
+    for control in ['\r', '\u{b}', '\u{c}'] {
+        let out = translate(&format!("#!/bin/bash{control}\nexport EDITOR=nvim"));
+        assert_ne!(
+            out.status.code(),
+            Some(0),
+            "recognized control-padded interpreter"
+        );
+        assert!(out.stdout.is_empty());
+    }
+}
+
+#[test]
+fn ignored_parser_gaps_cannot_discard_bash_argument_bytes() {
+    for gap in [
+        "\r", "\u{b}", "\u{c}", "\u{a0}", "\u{2003}", "\\ ", "\\\t", "\\\u{b}", "\\\u{c}", "\\\n",
+        "\\\r\n",
+    ] {
+        for source in [
+            format!("echo hello{gap}\n"),
+            format!("{gap}echo hello"),
+            gap.to_owned(),
+            format!("printf '%s\\n' a{gap}value"),
+            format!("printf '%s\\n' {gap}value"),
+            format!("if true;{gap}then true; fi"),
+            format!("for x in a;{gap}do true; done"),
+            format!("echo prefix; f() {{ if true; then printf '%s\\n' {gap}value; fi; }}"),
+        ] {
+            let out = Command::new(env!("CARGO_BIN_EXE_fws"))
+                .args(["--translate", "--strict", &source])
+                .output()
+                .unwrap();
+            assert_ne!(out.status.code(), Some(0), "lost gap bytes in {source:?}");
+            assert!(out.stdout.is_empty(), "partial output: {source:?}");
+            assert!(
+                String::from_utf8_lossy(&out.stderr).contains("fws:"),
+                "missing source diagnostic: {source:?}"
+            );
+        }
+    }
+    for source in ["", " \t\n\t ", "\t echo\t hello\n"] {
+        let out = translate(source);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "ordinary trivia {source:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
 fn fish_available() -> bool {
     let available = Command::new("fish")
         .arg("--version")

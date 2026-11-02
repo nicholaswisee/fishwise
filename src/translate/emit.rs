@@ -42,7 +42,6 @@ struct Bindings {
     locals: BTreeSet<String>,
     possible_locals: BTreeSet<String>,
     echo_safe: BTreeSet<String>,
-    echo_option: BTreeSet<String>,
 }
 
 impl Bindings {
@@ -55,9 +54,6 @@ impl Bindings {
                 .possible_locals
                 .extend(arm.possible_locals.iter().cloned());
             result.echo_safe.retain(|name| arm.echo_safe.contains(name));
-            result
-                .echo_option
-                .retain(|name| arm.echo_option.contains(name));
         }
         result
     }
@@ -142,7 +138,7 @@ impl Emitter<'_> {
                 let text = node_text(node, self.source);
                 if node.start_byte() == 0 && text.starts_with("#!") {
                     if matches!(
-                        text.trim_end(),
+                        text.trim_end_matches([' ', '\t']),
                         "#!/bin/bash" | "#!/usr/bin/bash" | "#!/usr/bin/env bash"
                     ) {
                         self.line("#!/usr/bin/env fish");
@@ -154,6 +150,10 @@ impl Emitter<'_> {
                         );
                     }
                 } else {
+                    if self.code.is_empty() && text.starts_with("#!") {
+                        // A source comment must not become an interpreter directive after formatting.
+                        self.code.push('\n');
+                    }
                     self.line(text);
                 }
             }
@@ -290,18 +290,15 @@ impl Emitter<'_> {
         }
         self.bindings.scalars.insert(name.to_owned());
         self.bindings.echo_safe.remove(name);
-        self.bindings.echo_option.remove(name);
         if !has_expansion(value_node)
             && matches!(
                 value_node.kind(),
                 "word" | "raw_string" | "string" | "number"
             )
+            && literal_prefix(value_node, self.source).is_some()
+            && !literal_starts_with_dash(value_node, self.source)
         {
-            if literal_starts_with_dash(value_node, self.source) {
-                self.bindings.echo_option.insert(name.to_owned());
-            } else {
-                self.bindings.echo_safe.insert(name.to_owned());
-            }
+            self.bindings.echo_safe.insert(name.to_owned());
         }
         if local {
             self.bindings.locals.insert(name.to_owned());
@@ -351,7 +348,6 @@ impl Emitter<'_> {
             self.line("end");
             self.bindings.scalars.remove(name);
             self.bindings.echo_safe.remove(name);
-            self.bindings.echo_option.remove(name);
         }
     }
 
@@ -930,11 +926,15 @@ fn single_quote(text: &str) -> String {
     format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 fn literal_starts_with_dash(node: Node<'_>, source: &str) -> bool {
+    literal_prefix(node, source) == Some('-')
+}
+fn literal_prefix(node: Node<'_>, source: &str) -> Option<char> {
     let text = node_text(node, source);
-    if matches!(node.kind(), "raw_string" | "string") {
-        text.get(1..).is_some_and(|s| s.starts_with('-'))
-    } else {
-        text.starts_with('-')
+    match node.kind() {
+        // Reuse literal rendering: Bash removes quoted backslash-newline before echo sees it.
+        "string" => escape_double(&text[1..text.len() - 1]).chars().next(),
+        "raw_string" => text[1..text.len() - 1].chars().next(),
+        _ => text.chars().next(),
     }
 }
 fn escape_double(s: &str) -> String {
@@ -982,6 +982,8 @@ fn special_variable(name: &str) -> bool {
                 | "ENV"
                 | "SHELL"
                 | "RANDOM"
+                | "SRANDOM"
+                | "_"
                 | "SECONDS"
                 | "LINENO"
                 | "UID"
@@ -1002,6 +1004,14 @@ fn special_variable(name: &str) -> bool {
                 | "HISTCMD"
                 | "SHLVL"
                 | "status"
+                | "history"
+                | "version"
+                | "hostname"
+                | "status_generation"
+                | "CMD_DURATION"
+                | "last_pid"
+                | "COLUMNS"
+                | "LINES"
                 | "argv"
                 | "pipestatus"
                 | "fish_pid"

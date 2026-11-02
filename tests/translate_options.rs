@@ -41,6 +41,40 @@ fn args<'a>(items: &'a [&'a str]) -> Vec<&'a std::ffi::OsStr> {
 }
 
 #[test]
+fn ignored_gap_errors_preserve_output_files_across_analysis_modes() {
+    let dir = temp_dir();
+    let output = dir.join("out.fish");
+    fs::write(&output, b"keep existing data").unwrap();
+    let source = b"echo prefix; printf '%s\\n' \\ value";
+    for flag in ["", "--strict", "--explain", "--validate"] {
+        let mut options = vec![
+            std::ffi::OsStr::new("--translate"),
+            std::ffi::OsStr::new("--output"),
+            output.as_os_str(),
+            std::ffi::OsStr::new("--force"),
+        ];
+        if !flag.is_empty() {
+            options.push(std::ffi::OsStr::new(flag));
+        }
+        let result = fws(&options, source);
+        assert_eq!(
+            result.status.code(),
+            Some(1),
+            "{flag}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(result.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("ignored Bash gap"));
+        assert_eq!(fs::read(&output).unwrap(), b"keep existing data");
+    }
+    let result = fws(&args(&["--translate", "--check"]), source);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(result.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("ignored Bash gap"));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn file_input_output_emits_only_code_and_preserves_input() {
     let dir = temp_dir();
     let input = dir.join("source.sh");

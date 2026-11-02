@@ -17,6 +17,14 @@ const FIXTURES: &[&str] = &[
     include_str!("fixtures/translate/scope.sh"),
 ];
 
+const QUOTED_DATA_FIXTURES: &[&str] = &[
+    "printf '%s\\n' 'a\rb' 'c\u{b}d' 'e\u{c}f'",
+    "printf '%s\\n' \"a\rb\" \"c\u{b}d\" \"e\u{c}f\"",
+    "printf '%s\\n' 'Unicode café 魚\n  literal line' \"Unicode café 魚\n  literal line\"",
+    "printf '%s\\n' 'a\\\nb' \"a\\\nb\"",
+    "# comment\r\u{b}\u{c}\n\tprintf\t'%s\\n'\tvalue\n",
+];
+
 fn private_dir() -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "fws-parity-{}-{}",
@@ -58,7 +66,7 @@ fn supported_goldens_pass_fish_syntax_and_trusted_fixtures_match_bash() {
     let home = dir.join("home");
     fs::create_dir(&home).unwrap();
 
-    for &source in FIXTURES {
+    for &source in FIXTURES.iter().chain(QUOTED_DATA_FIXTURES) {
         let translated = translator(source);
         assert_eq!(
             translated.status.code(),
@@ -90,7 +98,7 @@ fn supported_goldens_pass_fish_syntax_and_trusted_fixtures_match_bash() {
         );
     }
 
-    for &source in &FIXTURES[..7] {
+    for &source in FIXTURES[..7].iter().chain(QUOTED_DATA_FIXTURES) {
         let translated = translator(source);
         let bash = Command::new("bash")
             .args(["--noprofile", "--norc", "-c", source])

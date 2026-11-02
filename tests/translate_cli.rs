@@ -237,12 +237,20 @@ fn special_variable_writes_and_unimplemented_builtins_reject() {
 fn invalid_and_multiple_translation_arguments_fail() {
     for args in [
         vec!["--translate", "one", "two"],
-        vec!["--translate", "--strict"],
+        vec!["--translate", "--unknown-option"],
     ] {
         let out = fws().args(args).output().unwrap();
         assert_eq!(out.status.code(), Some(2));
         assert!(out.stdout.is_empty());
     }
+
+    let out = fws()
+        .args(["--translate", "--strict"])
+        .stdin(Stdio::piped())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(out.stdout.is_empty());
 }
 
 #[test]

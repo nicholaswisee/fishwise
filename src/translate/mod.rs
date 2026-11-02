@@ -1,9 +1,11 @@
 mod diagnostics;
 mod emit;
+pub mod io;
 mod parser;
+pub mod validate;
 
 use std::ffi::OsString;
-use std::io::Read;
+use std::io::Write;
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -55,46 +57,16 @@ pub fn translate(source: &str) -> Result<Translation, Vec<Diagnostic>> {
 }
 
 pub fn run(args: TranslateArgs) -> i32 {
-    if args.output.is_some()
-        || args.force
-        || args.check
-        || args.explain
-        || args.strict
-        || args.validate
-    {
-        eprintln!("fws: output/check/explain/strict/validate options are not implemented yet");
-        return 2;
-    }
-    let input = match args.source {
-        Source::Script(script) => match script.into_string() {
-            Ok(s) => s,
-            Err(_) => {
-                eprintln!("fws: translation input is not valid UTF-8");
-                return 1;
-            }
-        },
-        Source::Stdin => {
-            let mut bytes = Vec::new();
-            if let Err(e) = std::io::stdin().read_to_end(&mut bytes) {
-                eprintln!("fws: {e}");
-                return 1;
-            }
-            match String::from_utf8(bytes) {
-                Ok(s) => s,
-                Err(_) => {
-                    eprintln!("fws: translation input is not valid UTF-8");
-                    return 1;
-                }
-            }
-        }
-        Source::File(_) => {
-            eprintln!("fws: file input is not implemented yet");
-            return 2;
+    let input = match io::read_source(&args.source) {
+        Ok(input) => input,
+        Err(e) => {
+            eprintln!("fws: {e}");
+            return 1;
         }
     };
     match translate(&input) {
         Ok(result) => {
-            for d in result.diagnostics {
+            for d in &result.diagnostics {
                 let label = match d.classification {
                     Classification::Approximate => "warning",
                     Classification::Equivalent => "info",
@@ -105,7 +77,60 @@ pub fn run(args: TranslateArgs) -> i32 {
                     d.span.line, d.span.column, d.message,
                 );
             }
-            print!("{}", result.code);
+            if result
+                .diagnostics
+                .iter()
+                .any(|d| matches!(d.classification, Classification::Unsupported))
+            {
+                return 1;
+            }
+            if args.explain {
+                let count = result
+                    .diagnostics
+                    .iter()
+                    .filter(|d| matches!(d.classification, Classification::Equivalent))
+                    .count();
+                if count == 0 {
+                    eprintln!(
+                        "fws: explanation: translated supported Bash constructs to fish syntax"
+                    );
+                } else {
+                    eprintln!(
+                        "fws: explanation: {count} equivalent transformation(s) reported above"
+                    );
+                }
+            }
+            if args.strict
+                && result
+                    .diagnostics
+                    .iter()
+                    .any(|d| matches!(d.classification, Classification::Approximate))
+            {
+                eprintln!("fws: strict mode rejects approximate translations");
+                return 1;
+            }
+            if args.validate {
+                if let Err(e) = validate::syntax_check(&result.code) {
+                    eprintln!("fws: {e}");
+                    return 1;
+                }
+            }
+            if args.check {
+                return 0;
+            }
+            if let Some(output) = args.output {
+                if let Err(e) = io::reject_same_file(&args.source, &output) {
+                    eprintln!("fws: {e}");
+                    return 1;
+                }
+                if let Err(e) = io::publish(&output, result.code.as_bytes(), args.force) {
+                    eprintln!("fws: failed to publish {}: {e}", output.display());
+                    return 1;
+                }
+            } else if let Err(e) = std::io::stdout().lock().write_all(result.code.as_bytes()) {
+                eprintln!("fws: failed to write generated code: {e}");
+                return 1;
+            }
             0
         }
         Err(errors) => {

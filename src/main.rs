@@ -9,7 +9,7 @@ mod translate;
 fn main() {
     match cli::parse(std::env::args_os().skip(1).collect()) {
         Ok(cli::Invocation::Help) => println!(
-            "Usage: fws [-h|--help] [--] 'script'\n       fws --translate [script]\nRun a Bash script, or translate supported Bash into fish."
+            "Usage: fws [-h|--help] [--] 'script'\n       fws --translate [script | --file PATH] [--output|-o PATH] [--force]\n                    [--check] [--explain] [--strict] [--validate]\nRun a Bash script (default), or translate supported Bash into fish."
         ),
         Ok(cli::Invocation::Run(script)) => runner::run(script),
         Ok(cli::Invocation::Translate(args)) => std::process::exit(translate::run(args)),

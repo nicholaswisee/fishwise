@@ -6,3 +6,7 @@ edition = "2021"
 [[bin]]
 name = "fws"
 path = "src/main.rs"
+
+[dependencies]
+tree-sitter = "=0.25.10"
+tree-sitter-bash = "=0.25.1"

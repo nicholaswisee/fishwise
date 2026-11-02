@@ -1,8 +1,19 @@
 # fishwise (`fws`)
 
-Run copied Bash commands from your fish terminal with Bash semantics. Written in Rust, with no Rust dependencies. Requires Bash on `PATH`; supports Linux and macOS.
+Run copied Bash commands from your fish terminal with Bash semantics, or opt in to translating a conservative subset into fish. Written in Rust; the translator uses tree-sitter-bash. Run mode requires Bash on `PATH`; supports Linux and macOS.
 
-`fws` runs Bash rather than translating its syntax into fish. That preserves `set -a`, `. ./.env`, exports, heredocs, arrays, expansions, pipelines, and Bash builtins.
+By default `fws` runs Bash rather than translating its syntax into fish. That preserves `set -a`, `. ./.env`, exports, heredocs, arrays, expansions, pipelines, and Bash builtins.
+
+## Translate supported snippets
+
+Translation is opt-in and never executes the input:
+
+```fish
+fws --translate 'export EDITOR=nvim; echo "$EDITOR"'
+cat setup.sh | fws --translate
+```
+
+The first milestone supports top-level scalar assignments and exports, comments/shebangs, and simple commands with literal or quoted scalar-expansion arguments. Assignments are preceded by `builtin true` so their successful Bash status is preserved; status-dependent assignment values are rejected. Fish-list/scalar assumptions are reported as warnings. Only conservative `echo`, `true`, `false`, and `printf` forms are translated; other Bash/fish builtins, shell operators, redirections, and unquoted expansions fail without emitting partial code. Variable assignments/reads are limited to ordinary identifiers: shell-reserved names and `BASH*`, `COMP_*`, and `fish_*` names are rejected. Translation input must be UTF-8. File input/output, strict/check/validation options, and nested control flow are not implemented yet.
 
 ## Install
 
